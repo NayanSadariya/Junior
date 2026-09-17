@@ -12,3 +12,4 @@ db = mongo_client["junior"]
 
 messages = db["messages"]
 memories = db["memories"]
+conversations = db["conversations"] 

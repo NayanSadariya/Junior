@@ -3,9 +3,9 @@ from datetime import datetime
 from fastapi import FastAPI
 
 from ai import client, generate_response
-from database import messages
+from database import messages, conversations
 from memory import get_user_memories, save_memory
-from models import ChatRequest
+from models import ChatRequest, ConversationRequest
 
 
 app = FastAPI()
@@ -62,6 +62,36 @@ def home():
         "message": "Junior backend is running.."
     }
 
+@app.post("/conversations")
+def create_conversation(request: ConversationRequest):
+
+    conversation = {
+        "user_id": request.user_id,
+        "title": request.title,
+        "created_at": datetime.now()
+    }
+
+    result = conversations.insert_one(conversation)
+
+    return {
+        "conversation_id": str(result.inserted_id),
+        "title": request.title
+    }
+
+@app.get("/conversations/{user_id}")
+def get_conversations(user_id: str):
+
+    user_conversations = conversations.find(
+        {"user_id": user_id}
+    ).sort("created_at", -1)
+
+    return [
+        {
+            "conversation_id": str(conversation["_id"]),
+            "title": conversation["title"]
+        }
+        for conversation in user_conversations
+    ]
 
 @app.post("/chat")
 def chat(request: ChatRequest):
