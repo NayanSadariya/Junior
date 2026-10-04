@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from fastapi import FastAPI
-
+from fastapi.middleware.cors import CORSMiddleware
 from ai import client, generate_response
 from database import messages, conversations
 from memory import get_user_memories, save_memory
@@ -11,6 +11,16 @@ from bson import ObjectId
 
 app = FastAPI()
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Extract important long-term memories
 def extract_memory(user_id: str, user_message: str):
