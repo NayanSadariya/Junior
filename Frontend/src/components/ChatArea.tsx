@@ -1,19 +1,18 @@
 function ChatArea() {
   return (
-    <section className="glass flex min-w-0 flex-1 flex-col rounded-2xl">
+    <section className="glass flex min-h-0 min-w-0 flex-1 flex-col rounded-2xl">
       <div className="flex flex-1 items-center justify-center px-6">
         <div className="max-w-lg text-center">
           <p className="mb-3 text-xs font-medium uppercase tracking-[0.2em] text-zinc-400">
             Personal AI
           </p>
 
-          <h2 className="text-4xl font-semibold tracking-tight text-zinc-900">
+          <h2 className="text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl">
             How can I help?
           </h2>
 
           <p className="mt-3 text-sm leading-6 text-zinc-500">
-            Ask JUNIOR anything. Your conversations and memories stay connected
-            through your personal AI backend.
+            Ask JUNIOR anything. Your conversations and memories stay connected in all your devices.
           </p>
         </div>
       </div>

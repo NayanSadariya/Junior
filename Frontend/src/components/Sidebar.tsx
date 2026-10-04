@@ -1,6 +1,6 @@
 function Sidebar() {
   return (
-    <aside className="glass flex w-64 shrink-0 flex-col rounded-2xl p-4">
+    <aside className="glass flex h-full w-full flex-col rounded-2xl p-4 md:h-auto md:w-64 md:shrink-0">
       <button
         type="button"
         className="mb-6 rounded-xl bg-zinc-900 px-4 py-3 text-sm font-medium text-white transition hover:bg-zinc-800"
