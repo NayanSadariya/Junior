@@ -51,6 +51,53 @@ function App() {
     }
   }
 
+  async function handleDeleteConversation(conversationId: string) {
+    const confirmed = window.confirm(
+      'Are you sure you want to delete this conversation?',
+    )
+
+    if (!confirmed) return
+
+    try {
+      await apiRequest(`/conversations/${conversationId}`, {
+        method: 'DELETE',
+      })
+
+      if (activeConversationId === conversationId) {
+        setActiveConversationId(null)
+      }
+
+      setRefreshKey((current) => current + 1)
+      setError('')
+    } catch {
+      setError('Could not delete conversation.')
+    }
+  }
+
+  async function handleFirstMessage(message: string) {
+    if (!activeConversationId) return
+
+    const title =
+      message.trim().length > 40
+        ? `${message.trim().slice(0, 40)}...`
+        : message.trim()
+
+    try {
+      await apiRequest(`/conversations/${activeConversationId}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          user_id: 'nayan',
+          title,
+        }),
+      })
+
+      setRefreshKey((current) => current + 1)
+    } catch {
+      // The message itself already succeeded.
+      // A title failure should not interrupt the chat.
+    }
+  }
+
   return (
     <main className="flex h-dvh flex-col gap-3 overflow-hidden p-3 sm:gap-4 sm:p-4 md:p-6">
       <Header onMenuClick={() => setSidebarOpen(!sidebarOpen)} />
@@ -68,6 +115,7 @@ function App() {
               activeConversationId={activeConversationId}
               onSelectConversation={handleSelectConversation}
               onNewChat={handleNewChat}
+              onDeleteConversation={handleDeleteConversation}
               refreshKey={refreshKey}
             />
           </div>
@@ -87,13 +135,17 @@ function App() {
                 activeConversationId={activeConversationId}
                 onSelectConversation={handleSelectConversation}
                 onNewChat={handleNewChat}
+                onDeleteConversation={handleDeleteConversation}
                 refreshKey={refreshKey}
               />
             </div>
           </div>
         )}
 
-        <ChatArea conversationId={activeConversationId} />
+        <ChatArea
+          conversationId={activeConversationId}
+          onFirstMessage={handleFirstMessage}
+        />
       </div>
     </main>
   )

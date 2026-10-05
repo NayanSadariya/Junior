@@ -6,6 +6,7 @@ type SidebarProps = {
   activeConversationId: string | null
   onSelectConversation: (conversationId: string) => void
   onNewChat: () => void
+  onDeleteConversation: (conversationId: string) => void
   refreshKey: number
 }
 
@@ -13,11 +14,15 @@ function Sidebar({
   activeConversationId,
   onSelectConversation,
   onNewChat,
+  onDeleteConversation,
   refreshKey,
 }: SidebarProps) {
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editingTitle, setEditingTitle] = useState('')
 
   useEffect(() => {
     let cancelled = false
@@ -30,11 +35,18 @@ function Sidebar({
         const data = await apiRequest<Conversation[]>(
           '/conversations/nayan',
         )
-        if (!cancelled) setConversations(data)
+
+        if (!cancelled) {
+          setConversations(data)
+        }
       } catch {
-        if (!cancelled) setError('Could not load conversations.')
+        if (!cancelled) {
+          setError('Could not load conversations.')
+        }
       } finally {
-        if (!cancelled) setLoading(false)
+        if (!cancelled) {
+          setLoading(false)
+        }
       }
     }
 
@@ -44,6 +56,47 @@ function Sidebar({
       cancelled = true
     }
   }, [refreshKey])
+
+  function startEditing(conversation: Conversation) {
+    setEditingId(conversation.conversation_id)
+    setEditingTitle(conversation.title)
+  }
+
+  function cancelEditing() {
+    setEditingId(null)
+    setEditingTitle('')
+  }
+
+  async function saveTitle(conversationId: string) {
+    const title = editingTitle.trim()
+
+    if (!title) {
+      cancelEditing()
+      return
+    }
+
+    try {
+      await apiRequest(`/conversations/${conversationId}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          user_id: 'nayan',
+          title,
+        }),
+      })
+
+      setConversations((current) =>
+        current.map((conversation) =>
+          conversation.conversation_id === conversationId
+            ? { ...conversation, title }
+            : conversation,
+        ),
+      )
+
+      cancelEditing()
+    } catch {
+      setError('Could not rename conversation.')
+    }
+  }
 
   return (
     <aside className="glass flex h-full w-full flex-col rounded-2xl p-4 md:h-auto md:w-64 md:shrink-0">
@@ -67,7 +120,9 @@ function Sidebar({
         )}
 
         {error && (
-          <p className="px-2 py-3 text-sm text-red-500">{error}</p>
+          <p className="px-2 py-3 text-sm text-red-500">
+            {error}
+          </p>
         )}
 
         {!loading && !error && conversations.length === 0 && (
@@ -77,23 +132,86 @@ function Sidebar({
         )}
 
         <div className="space-y-1">
-          {conversations.map((conversation) => (
-            <button
-              key={conversation.conversation_id}
-              type="button"
-              onClick={() =>
-                onSelectConversation(conversation.conversation_id)
-              }
-              className={`w-full truncate rounded-xl px-3 py-2.5 text-left text-sm transition ${
-                activeConversationId === conversation.conversation_id
-                  ? 'bg-black/10 font-medium text-zinc-900'
-                  : 'text-zinc-700 hover:bg-black/5'
-              }`}
-              title={conversation.title}
-            >
-              {conversation.title}
-            </button>
-          ))}
+          {conversations.map((conversation) => {
+            const isActive =
+              activeConversationId === conversation.conversation_id
+
+            const isEditing =
+              editingId === conversation.conversation_id
+
+            return (
+              <div
+                key={conversation.conversation_id}
+                className={`group flex items-center gap-1 rounded-xl transition ${
+                  isActive ? 'bg-black/10' : 'hover:bg-black/5'
+                }`}
+              >
+                {isEditing ? (
+                  <input
+                    autoFocus
+                    value={editingTitle}
+                    onChange={(event) =>
+                      setEditingTitle(event.target.value)
+                    }
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        void saveTitle(conversation.conversation_id)
+                      }
+
+                      if (event.key === 'Escape') {
+                        cancelEditing()
+                      }
+                    }}
+                    onBlur={() => {
+                      void saveTitle(conversation.conversation_id)
+                    }}
+                    className="min-w-0 flex-1 bg-transparent px-3 py-2.5 text-sm text-zinc-900 outline-none"
+                  />
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onSelectConversation(
+                          conversation.conversation_id,
+                        )
+                      }
+                      className={`min-w-0 flex-1 truncate px-3 py-2.5 text-left text-sm ${
+                        isActive
+                          ? 'font-medium text-zinc-900'
+                          : 'text-zinc-700'
+                      }`}
+                      title={conversation.title}
+                    >
+                      {conversation.title}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => startEditing(conversation)}
+                      aria-label={`Rename ${conversation.title}`}
+                      className="mr-1 hidden rounded-lg px-2 py-1 text-xs text-zinc-400 transition hover:bg-black/5 hover:text-zinc-900 group-hover:block"
+                    >
+                      ✎
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onDeleteConversation(
+                          conversation.conversation_id,
+                        )
+                      }
+                      aria-label={`Delete ${conversation.title}`}
+                      className="mr-1 hidden rounded-lg px-2 py-1 text-xs text-zinc-400 transition hover:bg-red-500/10 hover:text-red-500 group-hover:block"
+                    >
+                      🗑
+                    </button>
+                  </>
+                )}
+              </div>
+            )
+          })}
         </div>
       </div>
     </aside>

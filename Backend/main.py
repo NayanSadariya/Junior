@@ -161,22 +161,20 @@ def rename_conversation(
 
 @app.delete("/conversations/{conversation_id}")
 def delete_conversation(
-    conversation_id: str,
-    user_id: str
+    conversation_id: str
 ):
 
-    result = conversations.delete_one({
-        "_id": ObjectId(conversation_id),
-        "user_id": user_id
+    conversation = conversations.find_one_and_delete({
+        "_id": ObjectId(conversation_id)
     })
 
-    if result.deleted_count == 0:
+    if not conversation:
         return {
             "error": "Conversation not found"
         }
 
     messages.delete_many({
-        "user_id": user_id,
+        "user_id": conversation["user_id"],
         "conversation_id": conversation_id
     })
 

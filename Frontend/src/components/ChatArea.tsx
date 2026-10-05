@@ -4,13 +4,14 @@ import type { Message } from '../types/message'
 
 type ChatAreaProps = {
   conversationId: string | null
+  onFirstMessage: (message: string) => void
 }
 
 type ChatResponse = {
   response: string
 }
 
-function ChatArea({ conversationId }: ChatAreaProps) {
+function ChatArea({ conversationId, onFirstMessage }: ChatAreaProps) {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -70,10 +71,16 @@ function ChatArea({ conversationId }: ChatAreaProps) {
       timestamp: new Date().toISOString(),
     }
 
+    const isFirstMessage = messages.length === 0
+
     setMessages((current) => [...current, userMessage])
     setInput('')
     setSending(true)
     setError('')
+
+    if (isFirstMessage) {
+      onFirstMessage(text)
+    }
 
     try {
       const data = await apiRequest<ChatResponse>('/chat', {
@@ -108,9 +115,11 @@ function ChatArea({ conversationId }: ChatAreaProps) {
               <p className="mb-3 text-xs font-medium uppercase tracking-[0.2em] text-zinc-400">
                 Personal AI
               </p>
+
               <h2 className="text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl">
                 How can I help?
               </h2>
+
               <p className="mt-3 text-sm leading-6 text-zinc-500">
                 Select a conversation or start a new one with JUNIOR.
               </p>
@@ -153,7 +162,9 @@ function ChatArea({ conversationId }: ChatAreaProps) {
       </div>
 
       {error && (
-        <p className="px-4 pb-2 text-sm text-red-500">{error}</p>
+        <p className="px-4 pb-2 text-sm text-red-500">
+          {error}
+        </p>
       )}
 
       <div className="p-4">
