@@ -1,4 +1,8 @@
 import { useEffect, useState, useRef } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
+import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { apiRequest } from '../lib/api'
 import type { Message } from '../types/message'
 
@@ -145,7 +149,121 @@ function ChatArea({ conversationId, onFirstMessage }: ChatAreaProps) {
                       : 'border border-black/5 bg-white/70 text-zinc-800'
                   }`}
                 >
-                  {message.content}
+
+                  {message.role === 'assistant' ? (
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      components={{
+                        h1: ({ children }) => (
+                          <h1 className="mb-3 mt-2 text-2xl font-semibold tracking-tight text-zinc-900">
+                            {children}
+                          </h1>
+                        ),
+
+                        h2: ({ children }) => (
+                          <h2 className="mb-2 mt-4 text-xl font-semibold tracking-tight text-zinc-900">
+                            {children}
+                          </h2>
+                        ),
+
+                        h3: ({ children }) => (
+                          <h3 className="mb-2 mt-3 text-lg font-semibold text-zinc-900">
+                            {children}
+                          </h3>
+                        ),
+
+                        p: ({ children }) => (
+                          <p className="mb-3 last:mb-0">
+                            {children}
+                          </p>
+                        ),
+
+                        ul: ({ children }) => (
+                          <ul className="mb-3 list-disc space-y-1 pl-5">
+                            {children}
+                          </ul>
+                        ),
+
+                        ol: ({ children }) => (
+                          <ol className="mb-3 list-decimal space-y-1 pl-5">
+                            {children}
+                          </ol>
+                        ),
+
+                        li: ({ children }) => (
+                          <li className="pl-1">
+                            {children}
+                          </li>
+                        ),
+
+                        strong: ({ children }) => (
+                          <strong className="font-semibold text-zinc-900">
+                            {children}
+                          </strong>
+                        ),
+
+                        code: ({ children, className }) => {
+                        const language = className?.replace('language-', '') || ''
+                        const code = String(children).replace(/\n$/, '')
+                        const isCodeBlock = Boolean(className)
+
+                        // Inline code: `const x = 10`
+                        if (!isCodeBlock) {
+                          return (
+                            <code className="rounded-md bg-black/5 px-1.5 py-0.5 font-mono text-[0.9em] text-zinc-800">
+                              {children}
+                            </code>
+                          )
+                        }
+
+                        // Fenced code block
+                         return (
+                        <div className="my-4 overflow-hidden rounded-xl border border-black/10">
+                          <div className="flex items-center justify-between bg-zinc-950 px-4 py-2">
+                            <span className="text-xs font-medium text-zinc-400">
+                              {language || 'code'}
+                            </span>
+
+                            <button
+                              type="button"
+                              onClick={() => void navigator.clipboard.writeText(code)}
+                              className="rounded-lg px-2.5 py-1 text-xs text-zinc-400 transition hover:bg-white/10 hover:text-white"
+                            >
+                              Copy
+                            </button>
+                          </div>
+
+                          <SyntaxHighlighter
+                            language={language || 'text'}
+                            style={oneDark}
+                            PreTag="div"
+                            customStyle={{
+                              margin: 0,
+                              borderRadius: 0,
+                              padding: '1rem',
+                              fontSize: '0.875rem',
+                              lineHeight: '1.5rem',
+                            }}
+                          >
+                            {code}
+                          </SyntaxHighlighter>
+                        </div>
+                      )
+                      },
+
+                        blockquote: ({ children }) => (
+                          <blockquote className="my-3 border-l-2 border-zinc-300 pl-4 italic text-zinc-500">
+                            {children}
+                          </blockquote>
+                        ),
+                      }}
+                    >
+                      {message.content}
+                    </ReactMarkdown>
+                  ) : (
+                    message.content
+                  )}
+
                 </div>
               </div>
             ))}
