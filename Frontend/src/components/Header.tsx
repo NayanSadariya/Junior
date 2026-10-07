@@ -1,3 +1,5 @@
+import { Mascot } from 'page-mascot'
+
 type HeaderProps = {
   onMenuClick: () => void
 }
@@ -20,12 +22,14 @@ function Header({ onMenuClick }: HeaderProps) {
         </h1>
       </div>
 
-      <button
-        type="button"
-        className="rounded-xl px-3 py-2 text-sm text-zinc-500 transition hover:bg-black/5 hover:text-zinc-900"
-      >
-        Settings
-      </button>
+      <div className="flex h-12 w-12 items-center justify-center">
+        <Mascot
+          directions="/mascots/junior-mascot-directions-v2.png"
+          reactions="/mascots/junior-mascot-reactions.png"
+          size={48}
+          label="Junior mascot"
+        />
+      </div>
     </header>
   )
 }
