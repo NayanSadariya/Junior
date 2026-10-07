@@ -190,7 +190,7 @@ function Sidebar({
                       type="button"
                       onClick={() => startEditing(conversation)}
                       aria-label={`Rename ${conversation.title}`}
-                      className="mr-1 hidden rounded-lg px-2 py-1 text-xs text-zinc-400 transition hover:bg-black/5 hover:text-zinc-900 group-hover:block"
+                      className="mr-1 rounded-lg px-2 py-1 text-xs text-zinc-400 transition hover:bg-black/5 hover:text-zinc-900 md:hidden md:group-hover:block"
                     >
                       ✎
                     </button>
@@ -203,7 +203,7 @@ function Sidebar({
                         )
                       }
                       aria-label={`Delete ${conversation.title}`}
-                      className="mr-1 hidden rounded-lg px-2 py-1 text-xs text-zinc-400 transition hover:bg-red-500/10 hover:text-red-500 group-hover:block"
+                      className="mr-1 rounded-lg px-2 py-1 text-xs text-zinc-400 transition hover:bg-red-500/10 hover:text-red-500 md:hidden md:group-hover:block"
                     >
                       🗑
                     </button>
