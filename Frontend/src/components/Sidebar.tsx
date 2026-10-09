@@ -3,6 +3,7 @@ import { apiRequest } from '../lib/api'
 import type { Conversation } from '../types/conversation'
 
 type SidebarProps = {
+  userId: string
   activeConversationId: string | null
   onSelectConversation: (conversationId: string) => void
   onNewChat: () => void
@@ -11,6 +12,7 @@ type SidebarProps = {
 }
 
 function Sidebar({
+  userId,
   activeConversationId,
   onSelectConversation,
   onNewChat,
@@ -33,7 +35,7 @@ function Sidebar({
 
       try {
         const data = await apiRequest<Conversation[]>(
-          '/conversations/nayan',
+          `/conversations/${userId}`,
         )
 
         if (!cancelled) {
@@ -55,7 +57,7 @@ function Sidebar({
     return () => {
       cancelled = true
     }
-  }, [refreshKey])
+  }, [refreshKey, userId])
 
   function startEditing(conversation: Conversation) {
     setEditingId(conversation.conversation_id)
@@ -79,7 +81,7 @@ function Sidebar({
       await apiRequest(`/conversations/${conversationId}`, {
         method: 'PUT',
         body: JSON.stringify({
-          user_id: 'nayan',
+          user_id: userId,
           title,
         }),
       })

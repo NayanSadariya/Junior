@@ -3,6 +3,8 @@ import Header from './components/Header'
 import Sidebar from './components/Sidebar'
 import ChatArea from './components/ChatArea'
 import { apiRequest } from './lib/api'
+import Login from './components/login'
+import type { GoogleUser } from './types/auth'
 
 type CreateConversationResponse = {
   conversation_id: string
@@ -10,12 +12,21 @@ type CreateConversationResponse = {
 }
 
 function App() {
+  const [googleUser, setGoogleUser] = useState<GoogleUser | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [activeConversationId, setActiveConversationId] =
     useState<string | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
   const [creatingChat, setCreatingChat] = useState(false)
   const [error, setError] = useState('')
+
+  if (!googleUser) {
+    return <Login onLogin={setGoogleUser} />
+  }
+
+  const userId = googleUser.sub
+  console.log('Google user:', googleUser)
+  console.log('Google user ID:', googleUser.sub)
 
   function handleSelectConversation(conversationId: string) {
     setActiveConversationId(conversationId)
@@ -35,7 +46,7 @@ function App() {
         {
           method: 'POST',
           body: JSON.stringify({
-            user_id: 'nayan',
+            user_id: userId,
             title: 'New Chat',
           }),
         },
@@ -86,7 +97,7 @@ function App() {
       await apiRequest(`/conversations/${activeConversationId}`, {
         method: 'PUT',
         body: JSON.stringify({
-          user_id: 'nayan',
+          user_id: userId,
           title,
         }),
       })
@@ -94,59 +105,37 @@ function App() {
       setRefreshKey((current) => current + 1)
     } catch {
       // The message itself already succeeded.
-      // A title failure should not interrupt the chat.
     }
   }
 
   return (
-    <main className="flex h-dvh flex-col gap-3 overflow-hidden p-3 sm:gap-4 sm:p-4 md:p-6">
-      <Header onMenuClick={() => setSidebarOpen(!sidebarOpen)} />
+    <main className="flex h-dvh flex-col gap-3 overflow-hidden p-3 sm:p-4">
+      <Header onMenuClick={() => setSidebarOpen((open) => !open)} />
 
-      {error && (
-        <p className="text-sm text-red-500" role="alert">
-          {error}
-        </p>
-      )}
-
-      <div className="relative flex min-h-0 flex-1 gap-3 sm:gap-4">
+      <div className="flex min-h-0 flex-1 gap-3">
         {sidebarOpen && (
-          <div className="hidden md:flex">
-            <Sidebar
-              activeConversationId={activeConversationId}
-              onSelectConversation={handleSelectConversation}
-              onNewChat={handleNewChat}
-              onDeleteConversation={handleDeleteConversation}
-              refreshKey={refreshKey}
-            />
-          </div>
-        )}
-
-        {sidebarOpen && (
-          <div className="absolute inset-0 z-20 md:hidden">
-            <button
-              type="button"
-              aria-label="Close sidebar"
-              className="absolute inset-0 h-full w-full bg-black/20 backdrop-blur-sm"
-              onClick={() => setSidebarOpen(false)}
-            />
-
-            <div className="relative z-10 h-full w-72 max-w-[85%]">
-              <Sidebar
-                activeConversationId={activeConversationId}
-                onSelectConversation={handleSelectConversation}
-                onNewChat={handleNewChat}
-                onDeleteConversation={handleDeleteConversation}
-                refreshKey={refreshKey}
-              />
-            </div>
-          </div>
+          <Sidebar
+            userId={userId}
+            activeConversationId={activeConversationId}
+            onSelectConversation={handleSelectConversation}
+            onNewChat={() => void handleNewChat()}
+            onDeleteConversation={handleDeleteConversation}
+            refreshKey={refreshKey}
+          />
         )}
 
         <ChatArea
+          userId={userId}
           conversationId={activeConversationId}
-          onFirstMessage={handleFirstMessage}
+          onFirstMessage={(message) => void handleFirstMessage(message)}
         />
       </div>
+
+      {error && (
+        <p role="alert" className="text-sm text-red-500">
+          {error}
+        </p>
+      )}
     </main>
   )
 }
