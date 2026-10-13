@@ -25,13 +25,30 @@ function App() {
   }
 
   const userId = googleUser.sub
-  console.log('Google user:', googleUser)
-  console.log('Google user ID:', googleUser.sub)
 
   function handleSelectConversation(conversationId: string) {
     setActiveConversationId(conversationId)
     setSidebarOpen(false)
     setError('')
+  }
+
+  async function createConversation(): Promise<string> {
+    const conversation = await apiRequest<CreateConversationResponse>(
+      '/conversations',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          user_id: userId,
+          title: 'New Chat',
+        }),
+      },
+    )
+
+    setActiveConversationId(conversation.conversation_id)
+    setRefreshKey((current) => current + 1)
+    setSidebarOpen(false)
+
+    return conversation.conversation_id
   }
 
   async function handleNewChat() {
@@ -41,20 +58,7 @@ function App() {
     setError('')
 
     try {
-      const conversation = await apiRequest<CreateConversationResponse>(
-        '/conversations',
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            user_id: userId,
-            title: 'New Chat',
-          }),
-        },
-      )
-
-      setActiveConversationId(conversation.conversation_id)
-      setRefreshKey((current) => current + 1)
-      setSidebarOpen(false)
+      await createConversation()
     } catch {
       setError('Could not create a new conversation.')
     } finally {
@@ -85,16 +89,21 @@ function App() {
     }
   }
 
-  async function handleFirstMessage(message: string) {
-    if (!activeConversationId) return
+  async function handleFirstMessage(
+    message: string,
+    conversationId: string,
+  ) {
+    const trimmedMessage = message.trim()
+
+    if (!trimmedMessage) return
 
     const title =
-      message.trim().length > 40
-        ? `${message.trim().slice(0, 40)}...`
-        : message.trim()
+      trimmedMessage.length > 40
+        ? `${trimmedMessage.slice(0, 40)}...`
+        : trimmedMessage
 
     try {
-      await apiRequest(`/conversations/${activeConversationId}`, {
+      await apiRequest(`/conversations/${conversationId}`, {
         method: 'PUT',
         body: JSON.stringify({
           user_id: userId,
@@ -103,8 +112,8 @@ function App() {
       })
 
       setRefreshKey((current) => current + 1)
-    } catch {
-      // The message itself already succeeded.
+    } catch (error) {
+      console.error('Could not update conversation title:', error)
     }
   }
 
@@ -127,7 +136,10 @@ function App() {
         <ChatArea
           userId={userId}
           conversationId={activeConversationId}
-          onFirstMessage={(message) => void handleFirstMessage(message)}
+          onCreateConversation={createConversation}
+          onFirstMessage={(message, conversationId) =>
+            void handleFirstMessage(message, conversationId)
+          }
         />
       </div>
 

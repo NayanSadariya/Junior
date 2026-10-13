@@ -9,7 +9,8 @@ import type { Message } from '../types/message'
 type ChatAreaProps = {
   userId: string
   conversationId: string | null
-  onFirstMessage: (message: string) => void
+  onCreateConversation: () => Promise<string>
+  onFirstMessage: (message: string, conversationId: string) => void
 }
 
 type ChatResponse = {
@@ -19,6 +20,7 @@ type ChatResponse = {
 function ChatArea({
   userId,
   conversationId,
+  onCreateConversation,
   onFirstMessage,
 }: ChatAreaProps) {
   const [messages, setMessages] = useState<Message[]>([])
@@ -27,6 +29,12 @@ function ChatArea({
   const [sending, setSending] = useState(false)
   const [error, setError] = useState('')
   const bottomRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const activeConversationRef = useRef<string | null>(conversationId)
+
+  useEffect(() => {
+    activeConversationRef.current = conversationId
+  }, [conversationId])
 
   useEffect(() => {
     if (!conversationId) {
@@ -76,31 +84,39 @@ function ChatArea({
   async function handleSend() {
     const text = input.trim()
 
-    if (!text || !conversationId || sending) return
+    if (!text || sending || loading) return
 
-    const userMessage: Message = {
-      role: 'user',
-      content: text,
-      timestamp: new Date().toISOString(),
-    }
-
-    const isFirstMessage = messages.length === 0
-
-    setMessages((current) => [...current, userMessage])
-    setInput('')
     setSending(true)
     setError('')
+    setInput('')
 
-    if (isFirstMessage) {
-      onFirstMessage(text)
-    }
+    let targetConversationId = activeConversationRef.current
 
     try {
+      if (!targetConversationId) {
+        targetConversationId = await onCreateConversation()
+        activeConversationRef.current = targetConversationId
+      }
+
+      const isFirstMessage = messages.length === 0
+
+      const userMessage: Message = {
+        role: 'user',
+        content: text,
+        timestamp: new Date().toISOString(),
+      }
+
+      setMessages((current) => [...current, userMessage])
+
+      if (isFirstMessage) {
+      onFirstMessage(text, targetConversationId)
+     }
+
       const data = await apiRequest<ChatResponse>('/chat', {
         method: 'POST',
         body: JSON.stringify({
           user_id: userId,
-          conversation_id: conversationId,
+          conversation_id: targetConversationId,
           message: text,
         }),
       })
@@ -114,6 +130,7 @@ function ChatArea({
       setMessages((current) => [...current, assistantMessage])
     } catch {
       setError('Message failed to send. Please try again.')
+      setInput(text)
     } finally {
       setSending(false)
     }
@@ -122,7 +139,7 @@ function ChatArea({
   return (
     <section className="glass flex min-h-0 min-w-0 flex-1 flex-col rounded-2xl">
       <div className="flex-1 space-y-4 overflow-y-auto p-4 sm:p-6">
-        {!conversationId ? (
+        {!conversationId && messages.length === 0 ? (
           <div className="flex h-full items-center justify-center">
             <div className="max-w-lg text-center">
               <p className="mb-3 text-xs font-medium uppercase tracking-[0.2em] text-zinc-400">
@@ -134,7 +151,7 @@ function ChatArea({
               </h2>
 
               <p className="mt-3 text-sm leading-6 text-zinc-500">
-                Select a conversation or start a new one with JUNIOR.
+                Start typing below to chat with JUNIOR.
               </p>
             </div>
           </div>
@@ -279,36 +296,36 @@ function ChatArea({
       )}
 
       <div className="p-4">
-        <div className="flex items-center gap-3 rounded-2xl border border-black/5 bg-white/50 px-4 py-3 backdrop-blur-xl">
+        <form
+          onSubmit={(event) => {
+            event.preventDefault()
+            void handleSend()
+          }}
+          className="flex items-center gap-3 rounded-2xl border border-black/5 bg-white/50 px-4 py-3 backdrop-blur-xl"
+        >
           <input
+            ref={inputRef}
             type="text"
             value={input}
             onChange={(event) => setInput(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.shiftKey) {
-                event.preventDefault()
-                void handleSend()
-              }
-            }}
             placeholder={
               conversationId
                 ? 'Message JUNIOR...'
-                : 'Select a conversation first...'
+                : 'Ask JUNIOR anything...'
             }
-            disabled={!conversationId || loading || sending}
+            disabled={loading || sending}
             className="min-w-0 flex-1 bg-transparent text-sm text-zinc-900 outline-none placeholder:text-zinc-400 disabled:cursor-not-allowed"
           />
 
           <button
-            type="button"
-            onClick={() => void handleSend()}
-            disabled={!conversationId || !input.trim() || loading || sending}
+            type="submit"
+            disabled={!input.trim() || loading || sending}
             aria-label="Send message"
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-zinc-900 text-sm text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
           >
             ↑
           </button>
-        </div>
+        </form>
       </div>
     </section>
   )
