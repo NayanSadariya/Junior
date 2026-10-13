@@ -117,9 +117,6 @@ function Login({ onLogin }: LoginProps) {
           </p>
         )}
 
-        <p className="mt-6 text-xs text-zinc-400">
-          Securely verified by JUNIOR's backend.
-        </p>
       </div>
     </main>
   )

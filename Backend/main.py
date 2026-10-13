@@ -208,13 +208,25 @@ def get_conversations(
         {"user_id": authenticated_user_id}
     ).sort("created_at", -1)
 
-    return [
-        {
-            "conversation_id": str(conversation["_id"]),
-            "title": conversation["title"],
-        }
-        for conversation in user_conversations
-    ]
+    result = []
+
+    for conversation in user_conversations:
+        conversation_id = str(conversation["_id"])
+
+        # Show a conversation only after its first user message.
+        has_user_message = messages.find_one({
+            "user_id": authenticated_user_id,
+            "conversation_id": conversation_id,
+            "role": "user",
+        })
+
+        if has_user_message:
+            result.append({
+                "conversation_id": conversation_id,
+                "title": conversation["title"],
+            })
+
+    return result
 
 
 @app.get("/users/{user_id}/conversations/{conversation_id}/messages")
