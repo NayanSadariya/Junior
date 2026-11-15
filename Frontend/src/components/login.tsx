@@ -1,14 +1,32 @@
 import { useState } from 'react'
 import { GoogleLogin } from '@react-oauth/google'
-import { apiRequest, setGoogleCredential } from '../lib/api'
+import { saveGoogleSession } from '../lib/api'
 import type { GoogleUser } from '../types/auth'
 
 type LoginProps = {
   onLogin: (user: GoogleUser) => void
 }
 
+function decodeGoogleUser(credential: string): GoogleUser {
+  const payload = credential.split('.')[1]
+
+  if (!payload) {
+    throw new Error('Invalid Google credential.')
+  }
+
+  const normalized = payload
+    .replace(/-/g, '+')
+    .replace(/_/g, '/')
+
+  const padded = normalized.padEnd(
+    normalized.length + ((4 - (normalized.length % 4)) % 4),
+    '=',
+  )
+
+  return JSON.parse(atob(padded)) as GoogleUser
+}
+
 function Login({ onLogin }: LoginProps) {
-  const [user, setUser] = useState<GoogleUser | null>(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -22,33 +40,22 @@ function Login({ onLogin }: LoginProps) {
     setError('')
 
     try {
-      const verifiedUser = await apiRequest<GoogleUser>('/auth/google', {
-        method: 'POST',
-        body: JSON.stringify({ credential }),
-      })
+      // Decode the Google ID token locally so the UI can log in immediately.
+      const user = decodeGoogleUser(credential)
 
-      if (!verifiedUser.sub) {
-        throw new Error('Google user ID is missing from the backend response.')
+      if (!user.sub) {
+        throw new Error('Google user ID is missing.')
       }
 
-      // Keep the verified Google credential in memory for protected API requests.
-      setGoogleCredential(credential)
+      // Save the credential + user for session restoration.
+      // The backend still verifies this credential on protected API requests.
+      saveGoogleSession(credential, user)
 
-      setUser(verifiedUser)
-      onLogin(verifiedUser)
-    } 
-    // catch {
-    //   setGoogleCredential(null)
-    //   setError('Sign-in failed. Please try again.')
-    // } 
-    
-    catch (error) {
-  setGoogleCredential(null)
-  console.error('Google login error:', error)
-  setError('Sign-in failed. Check the browser console.')
-    }
-
-    finally {
+      setLoading(false)
+      onLogin(user)
+    } catch (error) {
+      console.error('Google login error:', error)
+      setError('Sign-in failed. Check the browser console.')
       setLoading(false)
     }
   }
@@ -70,44 +77,24 @@ function Login({ onLogin }: LoginProps) {
           Your personal AI companion, ready whenever you are.
         </p>
 
-        {user ? (
-          <div className="mt-8">
-            {user.picture && (
-              <img
-                src={user.picture}
-                alt=""
-                className="mx-auto mb-3 h-14 w-14 rounded-full"
-              />
-            )}
-
-            <p className="font-medium text-zinc-900">
-              Welcome, {user.name ?? user.email ?? 'there'}!
-            </p>
-
-            <p className="mt-2 text-sm text-zinc-500">
-              {user.email}
-            </p>
-          </div>
-        ) : (
-          <div className="mt-8 flex justify-center">
-            <GoogleLogin
-              onSuccess={(response) => {
-                void handleGoogleSuccess(response.credential)
-              }}
-              onError={() => {
-                setError('Google sign-in failed.')
-              }}
-              theme="outline"
-              size="large"
-              text="signin_with"
-              shape="pill"
-            />
-          </div>
-        )}
+        <div className="mt-8 flex justify-center">
+          <GoogleLogin
+            onSuccess={(response) => {
+              void handleGoogleSuccess(response.credential)
+            }}
+            onError={() => {
+              setError('Google sign-in failed.')
+            }}
+            theme="outline"
+            size="large"
+            text="signin_with"
+            shape="pill"
+          />
+        </div>
 
         {loading && (
           <p className="mt-4 text-sm text-zinc-500">
-            Verifying your Google account...
+            Signing you in...
           </p>
         )}
 
@@ -116,7 +103,6 @@ function Login({ onLogin }: LoginProps) {
             {error}
           </p>
         )}
-
       </div>
     </main>
   )

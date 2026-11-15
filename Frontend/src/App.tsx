@@ -1,8 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Header from './components/Header'
 import Sidebar from './components/Sidebar'
 import ChatArea from './components/ChatArea'
-import { apiRequest } from './lib/api'
+import {apiRequest, restoreGoogleSession } from './lib/api'
 import Login from './components/login'
 import type { GoogleUser } from './types/auth'
 
@@ -13,12 +13,36 @@ type CreateConversationResponse = {
 
 function App() {
   const [googleUser, setGoogleUser] = useState<GoogleUser | null>(null)
+  const [authLoading, setAuthLoading] = useState(true)
+  useEffect(() => {
+  const savedUser = restoreGoogleSession()
+
+  if (savedUser) {
+    setGoogleUser(savedUser)
+  }
+
+  setAuthLoading(false)
+}, [])
+
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [activeConversationId, setActiveConversationId] =
     useState<string | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
   const [creatingChat, setCreatingChat] = useState(false)
   const [error, setError] = useState('')
+
+
+
+
+  if (authLoading) {
+  return (
+    <main className="flex min-h-dvh items-center justify-center">
+      <p className="text-sm text-zinc-500">
+        Loading JUNIOR...
+      </p>
+    </main>
+  )
+  }
 
   if (!googleUser) {
     return <Login onLogin={setGoogleUser} />
