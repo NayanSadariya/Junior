@@ -13,10 +13,6 @@ type ChatAreaProps = {
   onFirstMessage: (message: string, conversationId: string) => void
 }
 
-type ChatResponse = {
-  response: string
-}
-
 function ChatArea({
   userId,
   conversationId,
@@ -28,9 +24,15 @@ function ChatArea({
   const [loading, setLoading] = useState(false)
   const [sending, setSending] = useState(false)
   const [error, setError] = useState('')
+
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const activeConversationRef = useRef<string | null>(conversationId)
+
+  const abortControllerRef = useRef<AbortController | null>(null)
+
+  // Stores the prompt currently being generated.
+  const activePromptRef = useRef<string | null>(null)
 
   useEffect(() => {
     activeConversationRef.current = conversationId
@@ -78,8 +80,43 @@ function ChatArea({
   }, [conversationId, userId])
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    bottomRef.current?.scrollIntoView({
+      behavior: 'smooth',
+    })
   }, [messages, sending])
+
+  function handlePause() {
+    if (!abortControllerRef.current) return
+
+    abortControllerRef.current.abort()
+    abortControllerRef.current = null
+
+    setSending(false)
+    setError('Response stopped.')
+  }
+
+  function handleRewrite() {
+    const prompt = activePromptRef.current
+
+    if (!prompt) return
+
+    // Stop the current generation.
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+      abortControllerRef.current = null
+    }
+
+    // Put the original prompt back into the input.
+    setInput(prompt)
+
+    setSending(false)
+    setError('')
+
+    // Focus the input so the user can immediately edit it.
+    setTimeout(() => {
+      inputRef.current?.focus()
+    }, 0)
+  }
 
   async function handleSend() {
     const text = input.trim()
@@ -90,7 +127,13 @@ function ChatArea({
     setError('')
     setInput('')
 
-    let targetConversationId = activeConversationRef.current
+    const controller = new AbortController()
+    abortControllerRef.current = controller
+
+    activePromptRef.current = text
+
+    let targetConversationId =
+      activeConversationRef.current
 
     try {
       if (!targetConversationId) {
@@ -106,40 +149,191 @@ function ChatArea({
         timestamp: new Date().toISOString(),
       }
 
-      setMessages((current) => [...current, userMessage])
+      setMessages((current) => [
+        ...current,
+        userMessage,
+      ])
 
       if (isFirstMessage) {
-      onFirstMessage(text, targetConversationId)
-     }
+        onFirstMessage(text, targetConversationId)
+      }
 
-      const data = await apiRequest<ChatResponse>('/chat', {
-        method: 'POST',
-        body: JSON.stringify({
-          user_id: userId,
-          conversation_id: targetConversationId,
-          message: text,
-        }),
-      })
+      const API_URL = import.meta.env.VITE_API_URL
+
+      if (!API_URL) {
+        throw new Error(
+          'VITE_API_URL is not configured.',
+        )
+      }
+
+      const storedSession = localStorage.getItem(
+        'junior_google_session',
+      )
+
+      if (!storedSession) {
+        throw new Error(
+          'Authentication session not found.',
+        )
+      }
+
+      const session = JSON.parse(
+        storedSession,
+      ) as {
+        credential: string
+      }
+
+      const response = await fetch(
+        `${API_URL}/chat`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${session.credential}`,
+          },
+          body: JSON.stringify({
+            user_id: userId,
+            conversation_id:
+              targetConversationId,
+            message: text,
+          }),
+          signal: controller.signal,
+        },
+      )
+
+      if (!response.ok) {
+        throw new Error(
+          `API error: ${response.status}`,
+        )
+      }
+
+      if (!response.body) {
+        throw new Error(
+          'Streaming response is not available.',
+        )
+      }
+
+      const reader =
+        response.body.getReader()
+
+      const decoder =
+        new TextDecoder()
+
+      let assistantText = ''
 
       const assistantMessage: Message = {
         role: 'assistant',
-        content: data.response,
-        timestamp: new Date().toISOString(),
+        content: '',
+        timestamp:
+          new Date().toISOString(),
       }
 
-      setMessages((current) => [...current, assistantMessage])
-    } catch {
-      setError('Message failed to send. Please try again.')
+      setMessages((current) => [
+        ...current,
+        assistantMessage,
+      ])
+
+      while (true) {
+        const { value, done } =
+          await reader.read()
+
+        if (done) break
+
+        const chunk =
+          decoder.decode(value, {
+            stream: true,
+          })
+
+        assistantText += chunk
+
+        setMessages((current) => {
+          const updated = [...current]
+
+          const lastIndex =
+            updated.length - 1
+
+          if (
+            lastIndex >= 0 &&
+            updated[lastIndex]
+              .role === 'assistant'
+          ) {
+            updated[lastIndex] = {
+              ...updated[lastIndex],
+              content:
+                assistantText,
+            }
+          }
+
+          return updated
+        })
+      }
+
+      const finalChunk =
+        decoder.decode()
+
+      if (finalChunk) {
+        assistantText += finalChunk
+
+        setMessages((current) => {
+          const updated = [...current]
+
+          const lastIndex =
+            updated.length - 1
+
+          if (
+            lastIndex >= 0 &&
+            updated[lastIndex]
+              .role === 'assistant'
+          ) {
+            updated[lastIndex] = {
+              ...updated[lastIndex],
+              content:
+                assistantText,
+            }
+          }
+
+          return updated
+        })
+      }
+    } catch (error) {
+      if (
+        error instanceof DOMException &&
+        error.name === 'AbortError'
+      ) {
+        // The user intentionally stopped
+        // or rewrote the request.
+        return
+      }
+
+      console.error(
+        'Message failed:',
+        error,
+      )
+
+      setError(
+        'Message failed to send. Please try again.',
+      )
+
       setInput(text)
     } finally {
+      if (
+        abortControllerRef.current ===
+        controller
+      ) {
+        abortControllerRef.current = null
+      }
+
       setSending(false)
+
+      activePromptRef.current =
+        null
     }
   }
 
   return (
     <section className="glass flex min-h-0 min-w-0 flex-1 flex-col rounded-2xl">
       <div className="flex-1 space-y-4 overflow-y-auto p-4 sm:p-6">
-        {!conversationId && messages.length === 0 ? (
+        {!conversationId &&
+        messages.length === 0 ? (
           <div className="flex h-full items-center justify-center">
             <div className="max-w-lg text-center">
               <p className="mb-3 text-xs font-medium uppercase tracking-[0.2em] text-zinc-400">
@@ -151,7 +345,8 @@ function ChatArea({
               </h2>
 
               <p className="mt-3 text-sm leading-6 text-zinc-500">
-                Start typing below to chat with JUNIOR.
+                Start typing below to chat
+                with JUNIOR.
               </p>
             </div>
           </div>
@@ -161,124 +356,218 @@ function ChatArea({
           </p>
         ) : (
           <>
-            {messages.map((message, index) => (
-              <div
-                key={`${message.timestamp}-${index}`}
-                className={`flex ${
-                  message.role === 'user' ? 'justify-end' : 'justify-start'
-                }`}
-              >
+            {messages.map(
+              (message, index) => (
                 <div
-                  className={`max-w-[85%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-6 sm:max-w-[75%] ${
-                    message.role === 'user'
-                      ? 'bg-zinc-900 text-white'
-                      : 'border border-black/5 bg-white/70 text-zinc-800'
+                  key={`${message.timestamp}-${index}`}
+                  className={`flex ${
+                    message.role ===
+                    'user'
+                      ? 'justify-end'
+                      : 'justify-start'
                   }`}
                 >
-                  {message.role === 'assistant' ? (
-                    <ReactMarkdown
-                      remarkPlugins={[remarkGfm]}
-                      components={{
-                        h1: ({ children }) => (
-                          <h1 className="mb-3 mt-2 text-2xl font-semibold tracking-tight text-zinc-900">
-                            {children}
-                          </h1>
-                        ),
-                        h2: ({ children }) => (
-                          <h2 className="mb-2 mt-4 text-xl font-semibold tracking-tight text-zinc-900">
-                            {children}
-                          </h2>
-                        ),
-                        h3: ({ children }) => (
-                          <h3 className="mb-2 mt-3 text-lg font-semibold text-zinc-900">
-                            {children}
-                          </h3>
-                        ),
-                        p: ({ children }) => (
-                          <p className="mb-3 last:mb-0">{children}</p>
-                        ),
-                        ul: ({ children }) => (
-                          <ul className="mb-3 list-disc space-y-1 pl-5">
-                            {children}
-                          </ul>
-                        ),
-                        ol: ({ children }) => (
-                          <ol className="mb-3 list-decimal space-y-1 pl-5">
-                            {children}
-                          </ol>
-                        ),
-                        li: ({ children }) => (
-                          <li className="pl-1">{children}</li>
-                        ),
-                        strong: ({ children }) => (
-                          <strong className="font-semibold text-zinc-900">
-                            {children}
-                          </strong>
-                        ),
-                        code: ({ children, className }) => {
-                          const language =
-                            className?.replace('language-', '') || ''
-                          const code = String(children).replace(/\n$/, '')
-                          const isCodeBlock = Boolean(className)
+                  <div
+                    className={`max-w-[85%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-6 sm:max-w-[75%] ${
+                      message.role ===
+                      'user'
+                        ? 'bg-zinc-900 text-white'
+                        : 'border border-black/5 bg-white/70 text-zinc-800'
+                    }`}
+                  >
+                    {message.role ===
+                    'assistant' ? (
+                      <ReactMarkdown
+                        remarkPlugins={[
+                          remarkGfm,
+                        ]}
+                        components={{
+                          h1: ({
+                            children,
+                          }) => (
+                            <h1 className="mb-3 mt-2 text-2xl font-semibold tracking-tight text-zinc-900">
+                              {
+                                children
+                              }
+                            </h1>
+                          ),
 
-                          if (!isCodeBlock) {
-                            return (
-                              <code className="rounded-md bg-black/5 px-1.5 py-0.5 font-mono text-[0.9em] text-zinc-800">
-                                {children}
-                              </code>
-                            )
-                          }
+                          h2: ({
+                            children,
+                          }) => (
+                            <h2 className="mb-2 mt-4 text-xl font-semibold tracking-tight text-zinc-900">
+                              {
+                                children
+                              }
+                            </h2>
+                          ),
 
-                          return (
-                            <div className="my-4 overflow-hidden rounded-xl border border-black/10">
-                              <div className="flex items-center justify-between bg-zinc-950 px-4 py-2">
-                                <span className="text-xs font-medium text-zinc-400">
-                                  {language || 'code'}
-                                </span>
+                          h3: ({
+                            children,
+                          }) => (
+                            <h3 className="mb-2 mt-3 text-lg font-semibold text-zinc-900">
+                              {
+                                children
+                              }
+                            </h3>
+                          ),
 
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    void navigator.clipboard.writeText(code)
+                          p: ({
+                            children,
+                          }) => (
+                            <p className="mb-3 last:mb-0">
+                              {
+                                children
+                              }
+                            </p>
+                          ),
+
+                          ul: ({
+                            children,
+                          }) => (
+                            <ul className="mb-3 list-disc space-y-1 pl-5">
+                              {
+                                children
+                              }
+                            </ul>
+                          ),
+
+                          ol: ({
+                            children,
+                          }) => (
+                            <ol className="mb-3 list-decimal space-y-1 pl-5">
+                              {
+                                children
+                              }
+                            </ol>
+                          ),
+
+                          li: ({
+                            children,
+                          }) => (
+                            <li className="pl-1">
+                              {
+                                children
+                              }
+                            </li>
+                          ),
+
+                          strong: ({
+                            children,
+                          }) => (
+                            <strong className="font-semibold text-zinc-900">
+                              {
+                                children
+                              }
+                            </strong>
+                          ),
+
+                          code: ({
+                            children,
+                            className,
+                          }) => {
+                            const language =
+                              className?.replace(
+                                'language-',
+                                '',
+                              ) || ''
+
+                            const code =
+                              String(
+                                children,
+                              ).replace(
+                                /\n$/,
+                                '',
+                              )
+
+                            const isCodeBlock =
+                              Boolean(
+                                className,
+                              )
+
+                            if (
+                              !isCodeBlock
+                            ) {
+                              return (
+                                <code className="rounded-md bg-black/5 px-1.5 py-0.5 font-mono text-[0.9em] text-zinc-800">
+                                  {
+                                    children
                                   }
-                                  className="rounded-lg px-2.5 py-1 text-xs text-zinc-400 transition hover:bg-white/10 hover:text-white"
-                                >
-                                  Copy
-                                </button>
-                              </div>
+                                </code>
+                              )
+                            }
 
-                              <SyntaxHighlighter
-                                language={language || 'text'}
-                                style={oneDark}
-                                PreTag="div"
-                                customStyle={{
-                                  margin: 0,
-                                  borderRadius: 0,
-                                  padding: '1rem',
-                                  fontSize: '0.875rem',
-                                  lineHeight: '1.5rem',
-                                }}
-                              >
-                                {code}
-                              </SyntaxHighlighter>
-                            </div>
-                          )
-                        },
-                        blockquote: ({ children }) => (
-                          <blockquote className="my-3 border-l-2 border-zinc-300 pl-4 italic text-zinc-500">
-                            {children}
-                          </blockquote>
-                        ),
-                      }}
-                    >
-                      {message.content}
-                    </ReactMarkdown>
-                  ) : (
-                    message.content
-                  )}
+                            return (
+                              <div className="my-4 overflow-hidden rounded-xl border border-black/10">
+                                <div className="flex items-center justify-between bg-zinc-950 px-4 py-2">
+                                  <span className="text-xs font-medium text-zinc-400">
+                                    {language ||
+                                      'code'}
+                                  </span>
+
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      void navigator.clipboard.writeText(
+                                        code,
+                                      )
+                                    }
+                                    className="rounded-lg px-2.5 py-1 text-xs text-zinc-400 transition hover:bg-white/10 hover:text-white"
+                                  >
+                                    Copy
+                                  </button>
+                                </div>
+
+                                <SyntaxHighlighter
+                                  language={
+                                    language ||
+                                    'text'
+                                  }
+                                  style={
+                                    oneDark
+                                  }
+                                  PreTag="div"
+                                  customStyle={{
+                                    margin: 0,
+                                    borderRadius: 0,
+                                    padding:
+                                      '1rem',
+                                    fontSize:
+                                      '0.875rem',
+                                    lineHeight:
+                                      '1.5rem',
+                                  }}
+                                >
+                                  {
+                                    code
+                                  }
+                                </SyntaxHighlighter>
+                              </div>
+                            )
+                          },
+
+                          blockquote: ({
+                            children,
+                          }) => (
+                            <blockquote className="my-3 border-l-2 border-zinc-300 pl-4 italic text-zinc-500">
+                              {
+                                children
+                              }
+                            </blockquote>
+                          ),
+                        }}
+                      >
+                        {
+                          message.content
+                        }
+                      </ReactMarkdown>
+                    ) : (
+                      message.content
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              ),
+            )}
 
             {sending && (
               <p className="text-sm text-zinc-400">
@@ -292,7 +581,9 @@ function ChatArea({
       </div>
 
       {error && (
-        <p className="px-4 pb-2 text-sm text-red-500">{error}</p>
+        <p className="px-4 pb-2 text-sm text-red-500">
+          {error}
+        </p>
       )}
 
       <div className="p-4">
@@ -307,24 +598,59 @@ function ChatArea({
             ref={inputRef}
             type="text"
             value={input}
-            onChange={(event) => setInput(event.target.value)}
+            onChange={(event) =>
+              setInput(
+                event.target.value,
+              )
+            }
             placeholder={
               conversationId
                 ? 'Message JUNIOR...'
                 : 'Ask JUNIOR anything...'
             }
-            disabled={loading || sending}
+            disabled={
+              loading || sending
+            }
             className="min-w-0 flex-1 bg-transparent text-sm text-zinc-900 outline-none placeholder:text-zinc-400 disabled:cursor-not-allowed"
           />
 
-          <button
-            type="submit"
-            disabled={!input.trim() || loading || sending}
-            aria-label="Send message"
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-zinc-900 text-sm text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            ↑
-          </button>
+          {sending ? (
+            <div className="flex shrink-0 items-center gap-2">
+              <button
+                type="button"
+                onClick={
+                  handleRewrite
+                }
+                aria-label="Rewrite message"
+                className="flex h-9 w-9 items-center justify-center rounded-xl border border-black/10 bg-white text-sm text-zinc-700 transition hover:bg-zinc-100"
+              >
+                ✎
+              </button>
+
+              <button
+                type="button"
+                onClick={
+                  handlePause
+                }
+                aria-label="Pause response"
+                className="flex h-9 w-9 items-center justify-center rounded-xl bg-zinc-900 text-sm text-white transition hover:bg-zinc-800"
+              >
+                ■
+              </button>
+            </div>
+          ) : (
+            <button
+              type="submit"
+              disabled={
+                !input.trim() ||
+                loading
+              }
+              aria-label="Send message"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-zinc-900 text-sm text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              ↑
+            </button>
+          )}
         </form>
       </div>
     </section>

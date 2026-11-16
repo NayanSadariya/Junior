@@ -1,88 +1,30 @@
-from datetime import datetime
-
 import os
+from typing import AsyncGenerator
 
-from bson import ObjectId
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from google.auth.transport import requests
-from google.oauth2 import id_token
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
-from ai import client, generate_response
+from ai import client, generate_response_stream
 from database import messages, conversations
 from memory import get_user_memories, save_memory
-from models import ChatRequest, ConversationRequest, GoogleAuthRequest
 
 
 load_dotenv()
 
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
-
 app = FastAPI()
 
 
-# -------------------- AUTHENTICATION --------------------
-
-def verify_google_credential(credential: str):
-    if not GOOGLE_CLIENT_ID:
-        raise HTTPException(
-            status_code=500,
-            detail="Google Client ID is not configured",
-        )
-
-    try:
-        user_info = id_token.verify_oauth2_token(
-            credential,
-            requests.Request(),
-            GOOGLE_CLIENT_ID,
-        )
-    except ValueError:
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid Google credential",
-        )
-
-    return {
-        "user_id": user_info["sub"],
-        "name": user_info.get("name"),
-        "email": user_info.get("email"),
-        "picture": user_info.get("picture"),
-    }
-
-
-def get_current_user(authorization: str = Header(...)):
-    if not authorization.startswith("Bearer "):
-        raise HTTPException(
-            status_code=401,
-            detail="Missing authentication token",
-        )
-
-    credential = authorization.split(" ", 1)[1]
-
-    return verify_google_credential(credential)
-
-
-@app.post("/auth/google")
-def google_login(request: GoogleAuthRequest):
-    user = verify_google_credential(request.credential)
-
-    return {
-        "sub": user["user_id"],
-        "email": user["email"],
-        "name": user["name"],
-        "picture": user["picture"],
-    }
-
-# -------------------- CORS --------------------
+# --------------------------------------------------
+# CORS
+# --------------------------------------------------
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:4173",
-        "http://127.0.0.1:4173",
         "https://junior-six-delta.vercel.app",
     ],
     allow_credentials=True,
@@ -91,7 +33,38 @@ app.add_middleware(
 )
 
 
-# -------------------- MEMORY EXTRACTION --------------------
+# --------------------------------------------------
+# MODELS
+# --------------------------------------------------
+
+class ChatRequest(BaseModel):
+    user_id: str
+    conversation_id: str
+    message: str
+
+
+class ConversationCreateRequest(BaseModel):
+    user_id: str
+    title: str = "New Chat"
+
+
+class ConversationRenameRequest(BaseModel):
+    user_id: str
+    title: str
+
+
+# --------------------------------------------------
+# BASIC ROUTE
+# --------------------------------------------------
+
+@app.get("/")
+def root():
+    return {"message": "Junior backend is running.."}
+
+
+# --------------------------------------------------
+# MEMORY EXTRACTION
+# --------------------------------------------------
 
 def extract_memory(user_id: str, user_message: str):
     memory_check = client.chat.completions.create(
@@ -121,7 +94,7 @@ If there is something worth remembering, return ONLY the memory.
 If there is nothing worth remembering, return exactly:
 
 NONE
-"""
+""",
             },
             {
                 "role": "user",
@@ -136,265 +109,311 @@ NONE
         save_memory(user_id, memory)
 
 
-# -------------------- HELPERS --------------------
-
-def get_owned_conversation(user_id: str, conversation_id: str):
-    if not ObjectId.is_valid(conversation_id):
-        raise HTTPException(
-            status_code=404,
-            detail="Conversation not found",
-        )
-
-    conversation = conversations.find_one({
-        "_id": ObjectId(conversation_id),
-        "user_id": user_id,
-    })
-
-    if not conversation:
-        raise HTTPException(
-            status_code=404,
-            detail="Conversation not found",
-        )
-
-    return conversation
-
-
-# -------------------- HOME --------------------
-
-@app.get("/")
-def home():
-    return {
-        "message": "Junior backend is running.."
-    }
-
-
-# -------------------- CONVERSATIONS --------------------
+# --------------------------------------------------
+# CREATE CONVERSATION
+# --------------------------------------------------
 
 @app.post("/conversations")
-def create_conversation(
-    request: ConversationRequest,
-    current_user: dict = Depends(get_current_user),
-):
-    user_id = current_user["user_id"]
+def create_conversation(request: ConversationCreateRequest):
+    title = request.title.strip() or "New Chat"
 
     conversation = {
-        "user_id": user_id,
-        "title": request.title,
-        "created_at": datetime.now(),
+        "user_id": request.user_id,
+        "title": title,
     }
 
     result = conversations.insert_one(conversation)
 
     return {
         "conversation_id": str(result.inserted_id),
-        "title": request.title,
+        "title": title,
     }
 
 
+# --------------------------------------------------
+# GET CONVERSATIONS
+# --------------------------------------------------
+
 @app.get("/conversations/{user_id}")
-def get_conversations(
-    user_id: str,
-    current_user: dict = Depends(get_current_user),
-):
-    authenticated_user_id = current_user["user_id"]
+def get_conversations(user_id: str):
+    conversation_list = []
 
-    if user_id != authenticated_user_id:
-        raise HTTPException(
-            status_code=403,
-            detail="You cannot access another user's conversations",
-        )
+    cursor = conversations.find(
+        {"user_id": user_id}
+    ).sort("_id", -1)
 
-    user_conversations = conversations.find(
-        {"user_id": authenticated_user_id}
-    ).sort("created_at", -1)
-
-    result = []
-
-    for conversation in user_conversations:
+    for conversation in cursor:
         conversation_id = str(conversation["_id"])
 
-        # Show a conversation only after its first user message.
-        has_user_message = messages.find_one({
-            "user_id": authenticated_user_id,
-            "conversation_id": conversation_id,
-            "role": "user",
-        })
-
-        if has_user_message:
-            result.append({
+        # Only show conversations that actually contain
+        # at least one user message.
+        has_user_message = messages.find_one(
+            {
                 "conversation_id": conversation_id,
-                "title": conversation["title"],
-            })
-
-    return result
-
-
-@app.get("/users/{user_id}/conversations/{conversation_id}/messages")
-def get_messages(
-    user_id: str,
-    conversation_id: str,
-    current_user: dict = Depends(get_current_user),
-):
-    authenticated_user_id = current_user["user_id"]
-
-    if user_id != authenticated_user_id:
-        raise HTTPException(
-            status_code=403,
-            detail="You cannot access another user's messages",
+                "user_id": user_id,
+                "role": "user",
+            }
         )
 
-    get_owned_conversation(authenticated_user_id, conversation_id)
+        if not has_user_message:
+            continue
 
-    conversation_messages = messages.find({
-        "user_id": authenticated_user_id,
-        "conversation_id": conversation_id,
-    }).sort("timestamp", 1)
+        conversation_list.append(
+            {
+                "conversation_id": conversation_id,
+                "title": conversation.get(
+                    "title",
+                    "New Chat",
+                ),
+            }
+        )
 
-    return [
-        {
-            "role": message["role"],
-            "content": message["content"],
-            "timestamp": message["timestamp"],
-        }
-        for message in conversation_messages
-    ]
+    return conversation_list
 
+
+# --------------------------------------------------
+# RENAME CONVERSATION
+# --------------------------------------------------
 
 @app.put("/conversations/{conversation_id}")
 def rename_conversation(
     conversation_id: str,
-    request: ConversationRequest,
-    current_user: dict = Depends(get_current_user),
+    request: ConversationRenameRequest,
 ):
-    user_id = current_user["user_id"]
+    title = request.title.strip()
 
-    if request.user_id != user_id:
+    if not title:
         raise HTTPException(
-            status_code=403,
-            detail="You cannot modify another user's conversation",
+            status_code=400,
+            detail="Conversation title cannot be empty.",
         )
 
-    get_owned_conversation(user_id, conversation_id)
-
-    conversations.update_one(
+    result = conversations.update_one(
         {
-            "_id": ObjectId(conversation_id),
-            "user_id": user_id,
+            "_id": __import__("bson").ObjectId(conversation_id),
+            "user_id": request.user_id,
         },
         {
             "$set": {
-                "title": request.title,
+                "title": title,
             }
         },
     )
 
-    return {
-        "message": "Conversation renamed successfully",
-        "title": request.title,
-    }
-
-
-@app.delete("/conversations/{conversation_id}")
-def delete_conversation(
-    conversation_id: str,
-    current_user: dict = Depends(get_current_user),
-):
-    user_id = current_user["user_id"]
-
-    get_owned_conversation(user_id, conversation_id)
-
-    conversations.delete_one({
-        "_id": ObjectId(conversation_id),
-        "user_id": user_id,
-    })
-
-    messages.delete_many({
-        "user_id": user_id,
-        "conversation_id": conversation_id,
-    })
-
-    return {
-        "message": "Conversation deleted successfully"
-    }
-
-
-# -------------------- CHAT --------------------
-
-@app.post("/chat")
-def chat(
-    request: ChatRequest,
-    current_user: dict = Depends(get_current_user),
-):
-    user_id = current_user["user_id"]
-
-    if request.user_id != user_id:
+    if result.matched_count == 0:
         raise HTTPException(
-            status_code=403,
-            detail="You cannot chat as another user",
+            status_code=404,
+            detail="Conversation not found.",
         )
 
-    get_owned_conversation(user_id, request.conversation_id)
+    return {
+        "conversation_id": conversation_id,
+        "title": title,
+    }
 
-    # Get recent conversation history
-    history = list(
-        messages.find({
-            "user_id": user_id,
-            "conversation_id": request.conversation_id,
-        })
-        .sort("timestamp", -1)
-        .limit(10)
+
+# --------------------------------------------------
+# DELETE CONVERSATION
+# --------------------------------------------------
+
+@app.delete("/conversations/{conversation_id}")
+def delete_conversation(conversation_id: str):
+    from bson import ObjectId
+
+    try:
+        object_id = ObjectId(conversation_id)
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid conversation ID.",
+        )
+
+    conversations.delete_one(
+        {"_id": object_id}
     )
 
-    history.reverse()
-
-    # Format history for the AI
-    conversation_history = [
-        {
-            "role": message["role"],
-            "content": message["content"],
-        }
-        for message in history
-    ]
-
-    # Get long-term memories
-    user_memories = get_user_memories(user_id)
-
-    memory_context = "\n".join(
-        memory["content"]
-        for memory in user_memories
-    )
-
-    # Generate Junior's response
-    junior_response = generate_response(
-        conversation_history,
-        memory_context,
-        request.message,
-    )
-
-    # Save user's message
-    messages.insert_one({
-        "user_id": user_id,
-        "conversation_id": request.conversation_id,
-        "role": "user",
-        "content": request.message,
-        "timestamp": datetime.now(),
-    })
-
-    # Save Junior's response
-    messages.insert_one({
-        "user_id": user_id,
-        "conversation_id": request.conversation_id,
-        "role": "assistant",
-        "content": junior_response,
-        "timestamp": datetime.now(),
-    })
-
-    # Extract important memory
-    extract_memory(
-        user_id,
-        request.message,
+    messages.delete_many(
+        {"conversation_id": conversation_id}
     )
 
     return {
-        "response": junior_response
+        "message": "Conversation deleted successfully.",
     }
+
+
+# --------------------------------------------------
+# GET CONVERSATION MESSAGES
+# --------------------------------------------------
+
+@app.get(
+    "/users/{user_id}/conversations/{conversation_id}/messages"
+)
+def get_conversation_messages(
+    user_id: str,
+    conversation_id: str,
+):
+    conversation_messages = []
+
+    cursor = messages.find(
+        {
+            "user_id": user_id,
+            "conversation_id": conversation_id,
+        }
+    ).sort("_id", 1)
+
+    for message in cursor:
+        conversation_messages.append(
+            {
+                "role": message["role"],
+                "content": message["content"],
+                "timestamp": message.get(
+                    "timestamp"
+                ),
+            }
+        )
+
+    return conversation_messages
+
+
+# --------------------------------------------------
+# STREAMING CHAT
+# --------------------------------------------------
+
+@app.post("/chat")
+async def chat(
+    request: Request,
+    chat_request: ChatRequest,
+):
+    user_id = chat_request.user_id
+    conversation_id = chat_request.conversation_id
+    user_message = chat_request.message.strip()
+
+    if not user_message:
+        raise HTTPException(
+            status_code=400,
+            detail="Message cannot be empty.",
+        )
+
+    # --------------------------------------------------
+    # Get previous conversation history
+    # --------------------------------------------------
+
+    history = []
+
+    cursor = messages.find(
+        {
+            "user_id": user_id,
+            "conversation_id": conversation_id,
+        }
+    ).sort("_id", 1)
+
+    for message in cursor:
+        history.append(
+            {
+                "role": message["role"],
+                "content": message["content"],
+            }
+        )
+
+    # --------------------------------------------------
+    # Get memories
+    # --------------------------------------------------
+
+    memory_context = get_user_memories(user_id)
+
+    # --------------------------------------------------
+    # Generate streaming response
+    # --------------------------------------------------
+
+    async def response_generator() -> AsyncGenerator[str, None]:
+        full_response = ""
+        completed = False
+
+        try:
+            stream = generate_response_stream(
+                history,
+                memory_context,
+                user_message,
+            )
+
+            for chunk in stream:
+                # Stop generation if the browser disconnected.
+                if await request.is_disconnected():
+                    print(
+                        "Client disconnected. "
+                        "Stopping response."
+                    )
+                    return
+
+                full_response += chunk
+
+                yield chunk
+
+            completed = True
+
+        except GeneratorExit:
+            print(
+                "Client stopped the streaming response."
+            )
+            return
+
+        except Exception as error:
+            print(
+                f"Streaming generation error: {error}"
+            )
+            return
+
+        # --------------------------------------------------
+        # Only save the conversation if generation
+        # completed successfully.
+        # --------------------------------------------------
+
+        if (
+            completed
+            and full_response.strip()
+            and not await request.is_disconnected()
+        ):
+            try:
+                messages.insert_one(
+                    {
+                        "user_id": user_id,
+                        "conversation_id": conversation_id,
+                        "role": "user",
+                        "content": user_message,
+                    }
+                )
+
+                messages.insert_one(
+                    {
+                        "user_id": user_id,
+                        "conversation_id": conversation_id,
+                        "role": "assistant",
+                        "content": full_response,
+                    }
+                )
+
+            except Exception as error:
+                print(
+                    f"Database save error: {error}"
+                )
+
+            # --------------------------------------------------
+            # Extract long-term memory only after a
+            # successfully completed response.
+            # Memory failure must NOT break the chat.
+            # --------------------------------------------------
+
+            try:
+                extract_memory(
+                    user_id,
+                    user_message,
+                )
+            except Exception as error:
+                print(
+                    f"Memory extraction error: {error}"
+                )
+
+    return StreamingResponse(
+        response_generator(),
+        media_type="text/plain",
+    )
